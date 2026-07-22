@@ -337,23 +337,33 @@ export default function Home() {
       }
     }
 
-    Promise.all(
+    Promise.allSettled(
       enabledPOI.map((key) => {
         const cat = POI_CATEGORIES.find((c) => c.key === key);
-        if (!cat) return Promise.resolve([]);
-        return fetchPOI(routeCenter, radiusM, cat.key, cat.query);
-      }),
-    ).then((results) => {
+        if (!cat) return Promise.resolve({ items: [] });
+        return fetchPOI(routeCenter, radiusM, cat.key, cat.query).then((items) => ({ items, cat }));
+      })
+    ).then((settled) => {
       if (cancelled) return;
-      const all = results.flat();
+      const all: POIItem[] = [];
+      settled.forEach((res) => {
+        if (res.status === 'fulfilled') {
+          const { items, cat } = res.value;
+          // attach category to each item for later lookup
+          items.forEach((i) => (i as any).category = cat.key);
+          all.push(...items);
+        }
+      });
       setPOIItems(all);
-      poiLayerGroup.current.clearLayers();
       const L = window.L;
       all.forEach((poi) => {
         if (!Number.isFinite(poi.lat) || !Number.isFinite(poi.lng)) return;
-        const cat = POI_CATEGORIES.find((c) => c.key === poi.category);
+        const cat = POI_CATEGORIES.find((c) => c.key === (poi as any).category);
         const icon = L.divIcon({ className: 'poi-icon', html: `<span>${cat?.icon || '📍'}</span>`, iconSize: [28, 28], iconAnchor: [14, 14] });
         const m = L.marker([poi.lat, poi.lng], { icon }).addTo(poiLayerGroup.current);
+        // Tooltip on hover
+        m.bindTooltip(`${poi.name}\n${poi.lat.toFixed(5)}, ${poi.lng.toFixed(5)}`);
+        // Popup on click for details
         m.bindPopup(`<div class="popup-content"><b>${poi.name}</b><br/><small>${cat?.label}</small><br/><code>${poi.lat.toFixed(5)}, ${poi.lng.toFixed(5)}</code></div>`);
       });
       setPOILoading(false);
@@ -463,7 +473,7 @@ export default function Home() {
           <div className="brand-mark" aria-hidden="true">R</div>
           <div>
             <p className="eyebrow">Jelajah Indonesia</p>
-            <h1>RuteRasa</h1>
+            <h1>JRouteGen</h1>
           </div>
         </div>
         <div className="topbar-actions">
