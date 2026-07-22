@@ -104,14 +104,56 @@ function fallbackGeometry(points: Point[], targetKm: number) {
   const geometry: Point[] = [];
   points.forEach((point, i) => {
     const next = points[(i + 1) % points.length];
-    geometry.push(point);
-    for (let s = 1; s < 9; s++) {
+    if (i === 0) geometry.push(point); // first point
+    for (let s = 1; s <= 9; s++) {
       const t = s / 9;
       geometry.push({ lat: point.lat + (next.lat - point.lat) * t, lng: point.lng + (next.lng - point.lng) * t });
     }
   });
   return { geometry, distanceKm: targetKm, durationMin: Math.max(8, Math.round(targetKm * 4.2)) };
 }
+
+/* Helper: find nearest region to a point */
+function findNearestRegion(point: Point): string {
+  let nearest = 'jawaBarat';
+  let minDist = Infinity;
+  Object.entries(REGIONS).forEach(([key, r]) => {
+    const dLat = point.lat - r.center.lat;
+    const dLng = point.lng - r.center.lng;
+    const dist = dLat * dLat + dLng * dLng;
+    if (dist < minDist) {
+      minDist = dist;
+      nearest = key;
+    }
+  });
+  return nearest;
+}
+
+/* Helper: reverse‑geocode a point using Nominatim */
+async function reverseGeocode(point: Point): Promise<string> {
+  const url = `https://nominatim.openstreetmap.org/reverse?lat=${point.lat}&lon=${point.lng}&format=json`;
+  try {
+    const res = await fetch(url, { headers: { 'User-Agent': 'RuteRasa/1.0' } });
+    if (!res.ok) return '';
+    const data = await res.json();
+    const addr = data.address || {};
+    // Prefer smaller‑scale names (village, hamlet, suburb) then larger ones
+    return (
+      addr.village ||
+      addr.hamlet ||
+      addr.suburb ||
+      addr.neighbourhood ||
+      addr.city ||
+      addr.town ||
+      addr.state_district ||
+      addr.state ||
+      ''
+    );
+  } catch {
+    return '';
+  }
+}
+
 
 async function getRoadRoute(points: Point[]) {
   const coords = points.map((p) => `${p.lng},${p.lat}`).join(';');
@@ -186,6 +228,7 @@ export default function Home() {
   const [poiLoading, setPOILoading] = useState(false);
   const [copied, setCopied] = useState('');
   const [showPOIPanel, setShowPOIPanel] = useState(false);
+  const [includeSmallRoads, setIncludeSmallRoads] = useState(false);
 
   /* ── Map init ── */
   useEffect(() => {
@@ -205,10 +248,13 @@ export default function Home() {
         window.addEventListener('resize', resizeHandler);
 
         map.on('click', (e: any) => {
-          setCenter({ lat: e.latlng.lat, lng: e.latlng.lng });
+          const newCenter = { lat: e.latlng.lat, lng: e.latlng.lng };
+          const newRegion = findNearestRegion(newCenter);
+          setRegion(newRegion);
+          setCenter(newCenter);
           setRoute(null);
           setSelecting(false);
-          setLocationState(`Titik dipilih: ${e.latlng.lat.toFixed(4)}, ${e.latlng.lng.toFixed(4)}`);
+          setLocationState(`Titik dipilih: ${e.latlng.lat.toFixed(4)}, ${e.latlng.lng.toFixed(4)} (${REGIONS[newRegion].label})`);
         });
 
         mapRef.current = map;
@@ -271,8 +317,10 @@ export default function Home() {
 
   /* ── POI fetch ── */
   useEffect(() => {
-    if (!enabledPOI.length || !mapRef.current || !window.L || !poiLayerGroup.current) {
-      if (poiLayerGroup.current) poiLayerGroup.current.clearLayers();
+    if (!mapRef.current || !window.L || !poiLayerGroup.current) return;
+    // Clear stale POI markers immediately on any dependency change
+    poiLayerGroup.current.clearLayers();
+    if (!enabledPOI.length) {
       setPOIItems([]);
       return;
     }
@@ -338,41 +386,58 @@ export default function Home() {
     setRoute(null);
   }
 
-  async function generateRoute() {
+  async function generateRoute(randomize = false) {
     setLoading(true);
     const regionData = REGIONS[region];
-    const seeds = [0.3, 1.4, 2.6, 3.8, 5.1];
-    const candidates = seeds.map((seed) => {
-      const radius = Math.max(0.8, Math.min(15, targetKm / 3.2));
-      return {
-        points: [
-          center,
-          offsetPoint(center, radius * 1.05, seed),
-          offsetPoint(center, radius * 1.15, seed + 1.9),
-          offsetPoint(center, radius * 0.9, seed + 3.8),
-        ],
-        seed,
-      };
-    });
-    const results = await Promise.all(
-      candidates.map(async ({ points, seed }) => {
-        try {
-          return { ...(await getRoadRoute([...points, center])), seed };
-        } catch {
-          return { ...fallbackGeometry(points, targetKm * (0.9 + seed / 25)), roadWarning: false, seed };
-        }
-      }),
-    );
-    const best = results.sort((a, b) => Math.abs(a.distanceKm - targetKm) - Math.abs(b.distanceKm - targetKm))[0];
+    const maxAttempts = includeSmallRoads ? 1 : 3;
+    let best: any = null;
 
-    const shuffled = [...regionData.places].sort(() => Math.random() - 0.5);
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      // Regenerate seeds each attempt so retries produce different routes
+      const seeds = (randomize || attempt > 0)
+        ? Array.from({ length: 5 }, () => Math.random() * 2 * Math.PI)
+        : [0.3, 1.4, 2.6, 3.8, 5.1];
+
+      const candidates = seeds.map((seed) => {
+        const radius = Math.max(0.8, Math.min(15, targetKm / 3.2));
+        return {
+          points: [
+            center,
+            offsetPoint(center, radius * 1.05, seed),
+            offsetPoint(center, radius * 1.15, seed + 1.9),
+            offsetPoint(center, radius * 0.9, seed + 3.8),
+          ],
+          seed,
+        };
+      });
+      const results = await Promise.all(
+        candidates.map(async ({ points, seed }) => {
+          try {
+            return { ...(await getRoadRoute([...points, center])), seed };
+          } catch {
+            return { ...fallbackGeometry(points, targetKm * (0.9 + seed / 25)), roadWarning: false, seed };
+          }
+        }),
+      );
+      const candidate = results.sort((a, b) => Math.abs(a.distanceKm - targetKm) - Math.abs(b.distanceKm - targetKm))[0];
+
+      if (includeSmallRoads || !candidate.roadWarning) {
+        best = candidate;
+        break;
+      }
+      best = candidate; // fallback if all attempts have small roads
+    }
+
     const stopCount = Math.min(Math.max(2, Math.floor(targetKm / 5)), 5);
-    const stopNames = shuffled.slice(0, stopCount);
-    const stops = stopNames.map((name, i) => {
-      const idx = Math.floor(((i + 1) * (best.geometry.length - 1)) / (stopCount + 1));
-      const pt = best.geometry[idx];
-      return { name, lat: pt.lat, lng: pt.lng };
-    });
+    const stops = await Promise.all(
+      Array.from({ length: stopCount }, async (_, i) => {
+        const idx = Math.floor(((i + 1) * (best!.geometry.length - 1)) / (stopCount + 1));
+        const pt = best!.geometry[idx];
+        // Reverse‑geocode to get a human readable place name near the checkpoint
+        const name = await reverseGeocode(pt);
+        return { name: name || 'Checkpoint', lat: pt.lat, lng: pt.lng };
+      })
+    );
 
     setRoute({ ...best, stops });
     setLoading(false);
@@ -486,7 +551,14 @@ export default function Home() {
             </div>
 
             {/* Generate */}
-            <button type="button" className="generate-btn" onClick={generateRoute} disabled={loading || !mapReady}>
+            <div className="field-group">
+              <label className="checkbox-wrap">
+                <input type="checkbox" checked={includeSmallRoads} onChange={(e) => setIncludeSmallRoads(e.target.checked)} />
+                <span>Termasuk jalan kecil</span>
+              </label>
+            </div>
+
+            <button type="button" className="generate-btn" onClick={() => generateRoute(true)} disabled={loading || !mapReady}>
               {loading ? (
                 <><span className="spinner" /> Merangkai rute...</>
               ) : (
@@ -569,7 +641,7 @@ export default function Home() {
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg>
                   Buka di Google Maps
                 </a>
-                <button type="button" className="btn-outline" onClick={generateRoute}>🔄 Rute lain</button>
+                <button type="button" className="btn-outline" onClick={() => generateRoute(true)}>🔄 Rute lain</button>
               </div>
             </div>
           )}
