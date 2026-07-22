@@ -227,6 +227,17 @@ body {
 
 .btn-outline:hover { border-color: var(--brand); color: var(--brand); }
 
+.checkbox-wrap {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--bg);
+  font-size: 12px; font-weight: 500; color: var(--fg);
+  cursor: pointer; transition: all var(--transition);
+}
+
+.checkbox-wrap:hover { border-color: var(--brand); }
+.checkbox-wrap input { accent-color: var(--brand); width: 16px; height: 16px; cursor: pointer; }
+
 /* Distance */
 .distance-header {
   display: flex; align-items: center; justify-content: space-between;

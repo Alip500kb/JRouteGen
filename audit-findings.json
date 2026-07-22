@@ -1,0 +1,32 @@
+[
+  {
+    "line": 417,
+    "severity": "critical",
+    "issue": "All checkpoint names identical: findNearestPlace uses `center` as origin for angle calculation, but route geometry points are clustered near center (within ~5km). Angular spread is tiny, so Math.floor(angle/(2π) * places.length) yields the same index for every stop.",
+    "fix": "Pass best.geometry[0] (the actual route origin) instead of center to findNearestPlace. This gives each checkpoint its own anchor point, creating meaningful angular differentiation along the full route."
+  },
+  {
+    "line": 103,
+    "severity": "warning",
+    "issue": "fallbackGeometry duplicates the last input point as the first point of the next segment (line 107: geometry.push(point) followed by interpolation to next). With 5 input points, the 45-point output has 5 redundant duplicates at segment boundaries, inflating polyline length slightly.",
+    "fix": "Push only interpolated points for s=1..9, and skip the explicit point.push for i > 0. Or use the last interpolated point (s=9) as the shared boundary instead of duplicating."
+  },
+  {
+    "line": 302,
+    "severity": "warning",
+    "issue": "POI useEffect captures `route` but does not reset poiItems when route geometry changes mid-fetch. While the cancelled flag prevents stale POIItem state updates, poiLayerGroup.current shows POI markers from the previous route until the new fetch completes — briefly showing POIs at wrong coordinates.",
+    "fix": "Call poiLayerGroup.current.clearLayers() synchronously at the start of the effect (before Promise.all) when route changes, not only in the cancelled branch."
+  },
+  {
+    "line": 266,
+    "severity": "info",
+    "issue": "Route draw useEffect depends on [route, mapReady]. If route is set before mapReady=true (theoretically possible in concurrent rendering), the effect silently returns without drawing. Currently unreachable in practice due to sequential effect ordering.",
+    "fix": "No fix needed for current code. Consider adding a ref-based render queue if concurrent rendering patterns are introduced later."
+  },
+  {
+    "line": 133,
+    "severity": "info",
+    "issue": "findNearestPlace uses angular quantization: points are bucketed into `places.length` bins by angle. For short routes, the angular precision is coarse — adjacent points on the same road can map to different places or the same place arbitrarily.",
+    "fix": "Consider using Euclidean distance to nearest known place instead of angular bucketing, or combine angle-based selection with distance weighting for more stable results."
+  }
+]
