@@ -3,8 +3,8 @@ import { Providers } from '@/components/providers/Providers';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Portfolio',
-  description: 'My portfolio',
+  title: 'JRouteGen',
+  description: 'JRG Project',
 };
 
 export const viewport: Viewport = {
