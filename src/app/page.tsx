@@ -229,6 +229,7 @@ export default function Home() {
   const [copied, setCopied] = useState('');
   const [showPOIPanel, setShowPOIPanel] = useState(false);
   const [includeSmallRoads, setIncludeSmallRoads] = useState(false);
+  const [routeTitle, setRouteTitle] = useState<string>('');
 
   /* ── Map init ── */
   useEffect(() => {
@@ -247,14 +248,15 @@ export default function Home() {
         resizeHandler = () => map.invalidateSize();
         window.addEventListener('resize', resizeHandler);
 
-        map.on('click', (e: any) => {
+        map.on('click', async (e: any) => {
           const newCenter = { lat: e.latlng.lat, lng: e.latlng.lng };
-          const newRegion = findNearestRegion(newCenter);
-          setRegion(newRegion);
+          const newRegion = await reverseGeocode(newCenter);
+          // setRegion(newRegion);
           setCenter(newCenter);
           setRoute(null);
+          setRouteTitle('');
           setSelecting(false);
-          setLocationState(`Titik dipilih: ${e.latlng.lat.toFixed(4)}, ${e.latlng.lng.toFixed(4)} (${REGIONS[newRegion].label})`);
+          setLocationState(`Titik dipilih: ${e.latlng.lat.toFixed(4)}, ${e.latlng.lng.toFixed(4)} (${newRegion ? newRegion : 'tidak ditemukan'})`);
         });
 
         mapRef.current = map;
@@ -376,7 +378,7 @@ export default function Home() {
     if (!navigator.geolocation) { setLocationState('Browser tidak mendukung lokasi'); return; }
     setLocationState('Mencari lokasi...');
     navigator.geolocation.getCurrentPosition(
-      (pos) => { setCenter({ lat: pos.coords.latitude, lng: pos.coords.longitude }); setRoute(null); setLocationState('Lokasi aktif dari perangkat'); },
+      (pos) => { setCenter({ lat: pos.coords.latitude, lng: pos.coords.longitude }); setRoute(null); setRouteTitle(''); setLocationState('Lokasi aktif dari perangkat'); },
       () => setLocationState('Izin lokasi ditolak'),
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 },
     );
@@ -386,6 +388,7 @@ export default function Home() {
     setRegion(key);
     setCenter(REGIONS[key].center);
     setRoute(null);
+    setRouteTitle('');
     setLocationState(`Area: ${REGIONS[key].label}`);
   }
 
@@ -394,6 +397,7 @@ export default function Home() {
     setTargetKm(clamped);
     setCustomInput(String(clamped));
     setRoute(null);
+    setRouteTitle('');
   }
 
   async function generateRoute(randomize = false) {
@@ -451,6 +455,11 @@ export default function Home() {
 
     setRoute({ ...best, stops });
     setLoading(false);
+
+    // Update route title
+    const regionLabel = REGIONS[region].label;
+    const originName = await reverseGeocode(center);
+    setRouteTitle(originName ? `Track ${originName}` : `Track ${regionLabel}`);
   }
 
   function copyCoord(lat: number, lng: number, label: string) {
@@ -466,7 +475,9 @@ export default function Home() {
   const gmapsUrl = route ? buildGoogleMapsUrl([{ lat: center.lat, lng: center.lng }, ...route.stops, { lat: center.lat, lng: center.lng }]) : '';
 
   return (
+    
     <main className={`app-shell ${selecting ? 'is-picking' : ''}`}>
+      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&icon_names=file_copy,repartition" />
       {/* ── Header ── */}
       <header className="topbar">
         <div className="brand-lockup">
@@ -513,7 +524,9 @@ export default function Home() {
                   {selecting ? 'Klik di peta...' : `${center.lat.toFixed(4)}, ${center.lng.toFixed(4)}`}
                 </button>
                 <button type="button" className="btn-outline" onClick={useMyLocation}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
+                  {/* <span className="material-symbols-outlined">
+                    my_location
+                  </span> */}
                   GPS
                 </button>
               </div>
@@ -608,7 +621,7 @@ export default function Home() {
           <div ref={mapEl} className="map-canvas" />
 
           <div className="map-overlay top-left">
-            <span className="map-chip">{REGIONS[region].label}</span>
+            {/* <span className="map-chip">{routeTitle || REGIONS[region].label}</span> */}
           </div>
 
           <div className="map-overlay bottom-left">
@@ -622,7 +635,7 @@ export default function Home() {
                 <span className="route-badge">Rute ditemukan</span>
                 {route.roadWarning && <span className="road-warn">⚠️ Ada jalan kecil</span>}
               </div>
-              <h3>Putaran {REGIONS[region].label}</h3>
+              <h3>{routeTitle}</h3>
               <div className="route-stats">
                 <div><b>{route.distanceKm.toFixed(1)}</b><small>km</small></div>
                 <div><b>{route.durationMin}</b><small>menit</small></div>
@@ -640,7 +653,9 @@ export default function Home() {
                       <code className="checkpoint-coord">{stop.lat.toFixed(5)}, {stop.lng.toFixed(5)}</code>
                     </div>
                     <button type="button" className="copy-btn" onClick={() => copyCoord(stop.lat, stop.lng, stop.name)} title="Salin koordinat">
-                      {copied === stop.name ? '✓' : '📋'}
+                      {copied === stop.name ? '✓' : <span className="material-symbols-outlined">
+file_copy
+</span>}
                     </button>
                   </div>
                 ))}
@@ -651,7 +666,10 @@ export default function Home() {
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg>
                   Buka di Google Maps
                 </a>
-                <button type="button" className="btn-outline" onClick={() => generateRoute(true)}>🔄 Rute lain</button>
+                
+                <button style={{color: 'white'}} type="button" className="btn-outline" onClick={() => generateRoute(true)}><span className="material-symbols-outlined" >
+repartition
+</span> Rute lain</button>
               </div>
             </div>
           )}
